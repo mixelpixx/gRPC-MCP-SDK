@@ -9,7 +9,7 @@ A modern Python framework for building high-performance Model Context Protocol (
 
 ## 🚀 Why gRPC MCP SDK?
 
-While official MCP implementations use JSON-RPC over HTTP, gRPC MCP SDK provides **5-10x performance improvements** with enterprise-grade features:
+While official MCP implementations use JSON-RPC over HTTP, gRPC MCP SDK provides **5-10x performance improvements** with enterprise-grade features plus **Agent-to-Agent (A2A) protocol support** for seamless multi-agent collaboration:
 
 ### Performance Comparison
 | Feature | Official MCP SDK | gRPC MCP SDK |
@@ -20,6 +20,8 @@ While official MCP implementations use JSON-RPC over HTTP, gRPC MCP SDK provides
 | **Type Safety** | Runtime validation | Compile-time validation |
 | **Connection Overhead** | High | Minimal (connection reuse) |
 | **Enterprise Features** | Basic | Comprehensive |
+| **Agent Communication** | None | A2A Protocol Support |
+| **Multi-Agent Workflows** | Not Supported | Built-in Orchestration |
 
 ### Real-World Impact
 ```
@@ -38,15 +40,26 @@ Memory Usage:
 
 ## ✨ Features
 
-🚀 **Easy Tool Creation** - Simple decorators to define MCP tools  
-⚡ **High Performance** - Built on gRPC with streaming support  
-🔒 **Secure by Default** - Built-in authentication and rate limiting  
-🌐 **Cross-Platform** - Works across languages and platforms  
-📡 **Real-time Streaming** - Support for progressive results  
-🐳 **Production Ready** - Docker and Kubernetes support  
-🛠️ **Developer Friendly** - Rich CLI and debugging tools  
-🎯 **Type Safe** - Full Protocol Buffer type validation  
-📊 **Enterprise Grade** - Monitoring, health checks, load balancing  
+### Core MCP Features
+🚀 **Easy Tool Creation** - Simple decorators to define MCP tools
+⚡ **High Performance** - Built on gRPC with streaming support
+🔒 **Secure by Default** - Built-in authentication and rate limiting
+🌐 **Cross-Platform** - Works across languages and platforms
+📡 **Real-time Streaming** - Support for progressive results
+🐳 **Production Ready** - Docker and Kubernetes support
+🛠️ **Developer Friendly** - Rich CLI and debugging tools
+🎯 **Type Safe** - Full Protocol Buffer type validation
+📊 **Enterprise Grade** - Monitoring, health checks, load balancing
+
+### New A2A (Agent-to-Agent) Features
+🤝 **Agent Discovery** - Automatic discovery of agent capabilities
+🔗 **Agent Communication** - Seamless agent-to-agent communication
+🎼 **Workflow Orchestration** - Multi-agent workflow coordination
+🏷️ **Capability Management** - Rich capability metadata and versioning
+🔍 **Service Registry** - Enhanced registry with agent indexing
+⚡ **Parallel Execution** - Concurrent agent task execution
+🛡️ **Enhanced Security** - Agent authentication and authorization
+🌐 **Protocol Bridging** - Bridge between MCP and A2A ecosystems
 
 ## 🏃‍♂️ Quick Start
 
@@ -114,6 +127,69 @@ asyncio.run(main())
 ```
 
 ## 🌟 Advanced Features
+
+### A2A Agent Communication
+
+Create agents that can discover and communicate with each other:
+
+```python
+from grpc_mcp_sdk import agent_capability, register_local_agent, create_agent_client
+
+@agent_capability(
+    name="data_analysis",
+    description="Analyze datasets and generate insights",
+    capability_type=AgentCapabilityType.DATA_PROCESSOR,
+    requirements=["read_access"]
+)
+@mcp_tool(description="Analyze data with statistical insights")
+async def analyze_data(data: dict) -> MCPToolResult:
+    # Your analysis logic here
+    return MCPToolResult().add_json({"insight": "Data processed successfully"})
+
+# Register as an agent
+agent_id = register_local_agent(
+    name="Data Analyzer Agent",
+    description="Provides data analysis capabilities"
+)
+
+# Discover and communicate with other agents
+client = create_agent_client()
+agents = await client.discover_agents("data_analysis")
+result = await client.delegate_task("data_analysis", {"data": my_data})
+```
+
+### Multi-Agent Workflows
+
+Orchestrate complex workflows across multiple agents:
+
+```python
+from grpc_mcp_sdk import WorkflowStep, create_workflow_orchestrator
+
+# Define workflow steps
+steps = [
+    WorkflowStep(
+        step_id="validate",
+        capability_name="validate_data",
+        arguments={"data": dataset}
+    ),
+    WorkflowStep(
+        step_id="analyze",
+        capability_name="analyze_dataset",
+        arguments={"data": dataset},
+        depends_on=["validate"]
+    ),
+    WorkflowStep(
+        step_id="report",
+        capability_name="generate_report",
+        arguments={"analysis_data": {}},
+        depends_on=["analyze"]
+    )
+]
+
+# Execute workflow
+orchestrator = create_workflow_orchestrator()
+result = await orchestrator.execute_workflow("data_pipeline", steps)
+```
 
 ### Streaming Tools
 
@@ -431,8 +507,16 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ## 🗺️ Roadmap
 
-- [ ] **v1.1**: WebAssembly (WASM) tool support
-- [ ] **v1.2**: Visual tool builder GUI  
+### Recent Additions (v1.1)
+- [x] **A2A Protocol Support** - Agent-to-agent communication
+- [x] **Agent Discovery** - Automatic capability discovery
+- [x] **Workflow Orchestration** - Multi-agent coordination
+- [x] **Enhanced Registry** - Agent and capability management
+
+### Upcoming Features
+- [ ] **v1.2**: Enhanced A2A Security (mutual auth, encryption)
+- [ ] **v1.3**: Visual workflow builder GUI
+- [ ] **v1.4**: WebAssembly (WASM) tool support
 - [ ] **v2.0**: Multi-language SDK (Go, Rust, TypeScript)
 - [ ] **v2.1**: Advanced monitoring and observability
 - [ ] **v3.0**: Tool marketplace integration
@@ -443,12 +527,13 @@ MIT License - see [LICENSE](LICENSE) file for details.
 ### Related Projects
 
 - [Model Context Protocol](https://modelcontextprotocol.io/) - Official MCP specification
+- [Agent-to-Agent Protocol](https://github.com/google-a2a/A2A) - Google's A2A specification
 - [FastMCP](https://github.com/modelcontextprotocol/python-sdk) - Official Python SDK
 - [MCP Servers](https://github.com/modelcontextprotocol/servers) - Reference implementations
 
 ### Why We Built This
 
-The MCP ecosystem needed a high-performance, production-ready SDK. Community discussions (like [GitHub #283](https://github.com/orgs/modelcontextprotocol/discussions/283)) highlighted the need for gRPC transport. We built gRPC MCP SDK to fill this gap.
+The MCP ecosystem needed a high-performance, production-ready SDK with multi-agent capabilities. Community discussions highlighted the need for gRPC transport and agent interoperability. We built gRPC MCP SDK to bridge the MCP and A2A ecosystems, providing the best of both worlds.
 
 ### Success Stories
 
