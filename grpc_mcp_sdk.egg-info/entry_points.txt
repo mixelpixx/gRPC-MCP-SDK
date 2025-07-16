@@ -1,0 +1,2 @@
+[console_scripts]
+grpc-mcp = grpc_mcp_sdk:main
