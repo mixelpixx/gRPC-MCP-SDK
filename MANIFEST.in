@@ -1,0 +1,27 @@
+include README.md
+include LICENSE
+include requirements.txt
+include pyproject.toml
+include MANIFEST.in
+include .gitignore
+
+# Include all proto files
+recursive-include grpc_mcp_sdk/proto *.proto
+
+# Include type hints
+include grpc_mcp_sdk/py.typed
+
+# Include examples
+recursive-include examples *.py
+recursive-include examples *.md
+
+# Exclude test files and development files
+recursive-exclude * __pycache__
+recursive-exclude * *.py[co]
+recursive-exclude * .DS_Store
+recursive-exclude * *.log
+recursive-exclude * .git*
+recursive-exclude * .pytest_cache
+recursive-exclude * .mypy_cache
+recursive-exclude * .vscode
+recursive-exclude * .idea
