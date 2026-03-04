@@ -1,0 +1,139 @@
+syntax = "proto3";
+
+package grpc_mcp_sdk;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+// Main MCP service definition
+service MCPService {
+  // Core MCP methods
+  rpc Initialize(InitializeRequest) returns (InitializeResponse);
+  rpc ListTools(ListToolsRequest) returns (ListToolsResponse);
+  rpc ExecuteTool(ExecuteToolRequest) returns (ExecuteToolResponse);
+  rpc StreamTool(ExecuteToolRequest) returns (stream StreamToolResponse);
+  
+  // Health check
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// Initialize handshake
+message InitializeRequest {
+  string protocol_version = 1;
+  ClientInfo client_info = 2;
+  map<string, string> capabilities = 3;
+}
+
+message ClientInfo {
+  string name = 1;
+  string version = 2;
+}
+
+message InitializeResponse {
+  string protocol_version = 1;
+  ServerInfo server_info = 2;
+  map<string, string> capabilities = 3;
+}
+
+message ServerInfo {
+  string name = 1;
+  string version = 2;
+}
+
+// Tool listing
+message ListToolsRequest {
+  string filter = 1;  // Optional filter
+}
+
+message ListToolsResponse {
+  repeated ToolDefinition tools = 1;
+}
+
+message ToolDefinition {
+  string name = 1;
+  string description = 2;
+  repeated Parameter parameters = 3;
+  bool supports_streaming = 4;
+  map<string, string> metadata = 5;
+}
+
+message Parameter {
+  string name = 1;
+  string type = 2;  // "string", "number", "boolean", "object", "array"
+  bool required = 3;
+  string description = 4;
+  google.protobuf.Value default_value = 5;
+}
+
+// Tool execution
+message ExecuteToolRequest {
+  string tool_name = 1;
+  google.protobuf.Struct arguments = 2;
+  map<string, string> context = 3;
+  string request_id = 4;
+}
+
+message ExecuteToolResponse {
+  oneof result {
+    ToolResult success = 1;
+    ToolError error = 2;
+  }
+  string request_id = 3;
+  int64 execution_time_ms = 4;
+}
+
+message StreamToolResponse {
+  oneof content {
+    ToolProgress progress = 1;
+    ToolResult partial_result = 2;
+    ToolResult final_result = 3;
+    ToolError error = 4;
+  }
+  string request_id = 5;
+}
+
+message ToolResult {
+  repeated Content content = 1;
+  map<string, string> metadata = 2;
+}
+
+message Content {
+  oneof type {
+    TextContent text = 1;
+    JsonContent json = 2;
+    BinaryContent binary = 3;
+  }
+}
+
+message TextContent {
+  string text = 1;
+}
+
+message JsonContent {
+  google.protobuf.Struct data = 1;
+}
+
+message BinaryContent {
+  bytes data = 1;
+  string mime_type = 2;
+}
+
+message ToolProgress {
+  float progress = 1;  // 0.0 to 1.0
+  string message = 2;
+  google.protobuf.Timestamp timestamp = 3;
+}
+
+message ToolError {
+  string code = 1;
+  string message = 2;
+  google.protobuf.Struct details = 3;
+}
+
+// Health check
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  bool healthy = 1;
+  map<string, bool> component_health = 2;
+}
