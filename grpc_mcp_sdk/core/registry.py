@@ -72,14 +72,27 @@ class RateLimiter:
 
 class ToolRegistry:
     """Registry for MCP tools."""
-    
+
     _global_instance = None
     _lock = threading.Lock()
-    
+
     def __init__(self):
         self.tools: Dict[str, Tool] = {}
         self.rate_limiter = RateLimiter()
         self._healthy = True
+        self._on_change_callback: Optional[Callable[[], None]] = None
+
+    def set_on_change_callback(self, callback: Callable[[], None]) -> None:
+        """Set callback to be invoked when tools list changes."""
+        self._on_change_callback = callback
+
+    def _notify_change(self) -> None:
+        """Notify that tools list has changed."""
+        if self._on_change_callback:
+            try:
+                self._on_change_callback()
+            except Exception:
+                pass  # Silently ignore callback errors
     
     @classmethod
     def global_registry(cls) -> "ToolRegistry":
@@ -94,13 +107,15 @@ class ToolRegistry:
         """Register a tool."""
         if tool.name in self.tools:
             raise ValueError(f"Tool already registered: {tool.name}")
-        
+
         self.tools[tool.name] = tool
-    
+        self._notify_change()
+
     def unregister(self, tool_name: str) -> None:
         """Unregister a tool."""
         if tool_name in self.tools:
             del self.tools[tool_name]
+            self._notify_change()
     
     def get_tool(self, name: str) -> Optional[Tool]:
         """Get a tool by name."""

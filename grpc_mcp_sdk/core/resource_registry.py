@@ -104,6 +104,32 @@ class ResourceRegistry:
         self.templates: Dict[str, RegisteredTemplate] = {}
         self.subscriptions: Dict[str, Set[str]] = {}  # uri -> set of subscriber IDs
         self._healthy = True
+        self._on_change_callback: Optional[Callable[[], None]] = None
+        self._on_resource_updated_callback: Optional[Callable[[str], None]] = None
+
+    def set_on_change_callback(self, callback: Callable[[], None]) -> None:
+        """Set callback to be invoked when resources list changes."""
+        self._on_change_callback = callback
+
+    def set_on_resource_updated_callback(self, callback: Callable[[str], None]) -> None:
+        """Set callback to be invoked when a specific resource is updated."""
+        self._on_resource_updated_callback = callback
+
+    def _notify_change(self) -> None:
+        """Notify that resources list has changed."""
+        if self._on_change_callback:
+            try:
+                self._on_change_callback()
+            except Exception:
+                pass  # Silently ignore callback errors
+
+    def notify_resource_updated(self, uri: str) -> None:
+        """Notify that a specific resource has been updated."""
+        if self._on_resource_updated_callback:
+            try:
+                self._on_resource_updated_callback(uri)
+            except Exception:
+                pass  # Silently ignore callback errors
 
     @classmethod
     def global_registry(cls) -> "ResourceRegistry":
@@ -119,22 +145,26 @@ class ResourceRegistry:
         if resource.resource.uri in self.resources:
             raise ValueError(f"Resource already registered: {resource.resource.uri}")
         self.resources[resource.resource.uri] = resource
+        self._notify_change()
 
     def register_template(self, template: RegisteredTemplate) -> None:
         """Register a resource template."""
         if template.template.uriTemplate in self.templates:
             raise ValueError(f"Template already registered: {template.template.uriTemplate}")
         self.templates[template.template.uriTemplate] = template
+        self._notify_change()
 
     def unregister(self, uri: str) -> None:
         """Unregister a resource."""
         if uri in self.resources:
             del self.resources[uri]
+            self._notify_change()
 
     def unregister_template(self, uri_template: str) -> None:
         """Unregister a resource template."""
         if uri_template in self.templates:
             del self.templates[uri_template]
+            self._notify_change()
 
     def get_resource(self, uri: str) -> Optional[RegisteredResource]:
         """Get a resource by URI."""

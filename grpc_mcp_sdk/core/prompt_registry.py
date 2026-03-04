@@ -81,6 +81,19 @@ class PromptRegistry:
     def __init__(self):
         self.prompts: Dict[str, RegisteredPrompt] = {}
         self._healthy = True
+        self._on_change_callback: Optional[Callable[[], None]] = None
+
+    def set_on_change_callback(self, callback: Callable[[], None]) -> None:
+        """Set callback to be invoked when prompts list changes."""
+        self._on_change_callback = callback
+
+    def _notify_change(self) -> None:
+        """Notify that prompts list has changed."""
+        if self._on_change_callback:
+            try:
+                self._on_change_callback()
+            except Exception:
+                pass  # Silently ignore callback errors
 
     @classmethod
     def global_registry(cls) -> "PromptRegistry":
@@ -96,11 +109,13 @@ class PromptRegistry:
         if prompt.prompt.name in self.prompts:
             raise ValueError(f"Prompt already registered: {prompt.prompt.name}")
         self.prompts[prompt.prompt.name] = prompt
+        self._notify_change()
 
     def unregister(self, name: str) -> None:
         """Unregister a prompt."""
         if name in self.prompts:
             del self.prompts[name]
+            self._notify_change()
 
     def get_prompt(self, name: str) -> Optional[RegisteredPrompt]:
         """Get a prompt by name."""

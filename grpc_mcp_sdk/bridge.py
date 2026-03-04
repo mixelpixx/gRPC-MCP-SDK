@@ -24,6 +24,7 @@ from grpc_mcp_sdk.core.types import MCPToolResult, ServerCapabilities, ToolsCapa
 from grpc_mcp_sdk.core.registry import ToolRegistry
 from grpc_mcp_sdk.core.resource_registry import ResourceRegistry
 from grpc_mcp_sdk.core.prompt_registry import PromptRegistry
+from grpc_mcp_sdk.core.notifications import NotificationManager, Notification, NotificationType
 
 logger = logging.getLogger(__name__)
 
@@ -93,17 +94,65 @@ class MCPBridge:
         self.tool_registry = ToolRegistry.global_registry()
         self.resource_registry = ResourceRegistry.global_registry()
         self.prompt_registry = PromptRegistry.global_registry()
+        self.notification_manager = NotificationManager.global_manager()
         self.app = web.Application()
         self.active_sessions: Dict[str, Any] = {}
-        
+
         # Setup routes
         self.app.router.add_post("/mcp", self.handle_mcp_request)
         self.app.router.add_get("/mcp/sse/{session_id}", self.handle_sse_stream)
+        self.app.router.add_get("/mcp/notifications", self.handle_notification_stream)
         self.app.router.add_get("/health", self.health_check)
         self.app.router.add_get("/tools", self.list_tools)
-        
+
         # CORS middleware for web clients
         self.app.middlewares.append(self.cors_middleware)
+
+        # Wire up notification callbacks
+        self._setup_notification_callbacks()
+
+    def _setup_notification_callbacks(self) -> None:
+        """Wire up registry change callbacks to emit MCP notifications."""
+        def create_async_notifier(method: str):
+            """Create a callback that schedules async notification broadcast."""
+            def callback():
+                notification = Notification(method=method)
+                # Schedule the async broadcast on the event loop
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(self.notification_manager.broadcast(notification))
+                except RuntimeError:
+                    # No running loop - notifications will be sent when loop starts
+                    pass
+            return callback
+
+        def create_resource_update_notifier():
+            """Create a callback for resource update notifications."""
+            def callback(uri: str):
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(self.notification_manager.notify_resource_updated(uri))
+                except RuntimeError:
+                    pass
+            return callback
+
+        # Wire up tool registry
+        self.tool_registry.set_on_change_callback(
+            create_async_notifier(NotificationType.TOOLS_LIST_CHANGED)
+        )
+
+        # Wire up resource registry
+        self.resource_registry.set_on_change_callback(
+            create_async_notifier(NotificationType.RESOURCES_LIST_CHANGED)
+        )
+        self.resource_registry.set_on_resource_updated_callback(
+            create_resource_update_notifier()
+        )
+
+        # Wire up prompt registry
+        self.prompt_registry.set_on_change_callback(
+            create_async_notifier(NotificationType.PROMPTS_LIST_CHANGED)
+        )
 
     async def start(self):
         """Start the bridge server"""
@@ -169,9 +218,9 @@ class MCPBridge:
             elif mcp_request.method == "resources/templates/list":
                 response = await self._handle_resources_templates_list(mcp_request)
             elif mcp_request.method == "resources/subscribe":
-                response = await self._handle_resources_subscribe(mcp_request)
+                response = await self._handle_resources_subscribe(mcp_request, request)
             elif mcp_request.method == "resources/unsubscribe":
-                response = await self._handle_resources_unsubscribe(mcp_request)
+                response = await self._handle_resources_unsubscribe(mcp_request, request)
             elif mcp_request.method == "prompts/list":
                 response = await self._handle_prompts_list(mcp_request)
             elif mcp_request.method == "prompts/get":
@@ -400,6 +449,59 @@ class MCPBridge:
         
         return response
 
+    async def handle_notification_stream(self, request: web.Request) -> web.StreamResponse:
+        """Handle persistent SSE stream for MCP notifications.
+
+        Clients connect to this endpoint to receive server-initiated notifications
+        such as tools/list_changed, resources/updated, progress updates, etc.
+        """
+        # Create a session for this connection
+        session = self.notification_manager.create_session()
+        session_id = session.session_id
+
+        response = web.StreamResponse(
+            status=200,
+            reason='OK',
+            headers={
+                'Content-Type': 'text/event-stream',
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive',
+                'X-MCP-Session-Id': session_id,
+            }
+        )
+
+        await response.prepare(request)
+
+        # Send session ID as first message
+        await response.write(f"event: session\ndata: {json.dumps({'sessionId': session_id})}\n\n".encode())
+
+        try:
+            while True:
+                # Wait for notification with timeout
+                notification = await session.receive(timeout=30.0)
+
+                if notification:
+                    # Send notification as SSE event
+                    event_data = notification.to_json()
+                    await response.write(f"event: notification\ndata: {event_data}\n\n".encode())
+                else:
+                    # Send keepalive ping
+                    await response.write(f"event: ping\ndata: {json.dumps({'timestamp': time.time()})}\n\n".encode())
+
+                # Check if session was closed
+                if not session.active:
+                    break
+
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.exception(f"Error in notification stream: {e}")
+        finally:
+            # Cleanup session
+            self.notification_manager.close_session(session_id)
+
+        return response
+
     async def _handle_resources_list(self, request: MCPRequest) -> MCPResponse:
         """Handle resources/list request (MCP spec compliant)"""
         try:
@@ -462,8 +564,12 @@ class MCPBridge:
             error = MCPError(MCPError.INTERNAL_ERROR, f"Failed to list templates: {str(e)}")
             return MCPResponse(request.jsonrpc, request.id, error=error.to_dict())
 
-    async def _handle_resources_subscribe(self, request: MCPRequest) -> MCPResponse:
-        """Handle resources/subscribe request"""
+    async def _handle_resources_subscribe(self, request: MCPRequest, http_request: Optional[web.Request] = None) -> MCPResponse:
+        """Handle resources/subscribe request.
+
+        Subscribes a session to receive notifications when a resource is updated.
+        Requires X-MCP-Session-Id header from a notification stream connection.
+        """
         try:
             params = request.params
             uri = params.get("uri")
@@ -472,9 +578,23 @@ class MCPBridge:
                 error = MCPError(MCPError.INVALID_PARAMS, "Resource URI is required")
                 return MCPResponse(request.jsonrpc, request.id, error=error.to_dict())
 
-            # Generate subscriber ID (in real impl, use session ID)
-            subscriber_id = str(uuid.uuid4())
-            self.resource_registry.subscribe(uri, subscriber_id)
+            # Get session ID from header (set when client connects to notification stream)
+            session_id = None
+            if http_request:
+                session_id = http_request.headers.get("X-MCP-Session-Id")
+
+            if not session_id:
+                # For backwards compatibility, allow subscription without session
+                # but warn that notifications won't be delivered
+                session_id = str(uuid.uuid4())
+                logger.warning(f"Resource subscription without session ID for URI: {uri}")
+
+            # Register with both registries for tracking
+            self.resource_registry.subscribe(uri, session_id)
+
+            # Also register with notification manager for delivery
+            if self.notification_manager.get_session(session_id):
+                self.notification_manager.subscribe_resource(session_id, uri)
 
             result = {"subscribed": True, "uri": uri}
             return MCPResponse(request.jsonrpc, request.id, result=result)
@@ -484,8 +604,12 @@ class MCPBridge:
             error = MCPError(MCPError.INTERNAL_ERROR, f"Failed to subscribe: {str(e)}")
             return MCPResponse(request.jsonrpc, request.id, error=error.to_dict())
 
-    async def _handle_resources_unsubscribe(self, request: MCPRequest) -> MCPResponse:
-        """Handle resources/unsubscribe request"""
+    async def _handle_resources_unsubscribe(self, request: MCPRequest, http_request: Optional[web.Request] = None) -> MCPResponse:
+        """Handle resources/unsubscribe request.
+
+        Unsubscribes a session from resource update notifications.
+        Requires X-MCP-Session-Id header to identify the subscription.
+        """
         try:
             params = request.params
             uri = params.get("uri")
@@ -494,7 +618,18 @@ class MCPBridge:
                 error = MCPError(MCPError.INVALID_PARAMS, "Resource URI is required")
                 return MCPResponse(request.jsonrpc, request.id, error=error.to_dict())
 
-            # Note: In real impl, need to track subscriber IDs per session
+            # Get session ID from header
+            session_id = None
+            if http_request:
+                session_id = http_request.headers.get("X-MCP-Session-Id")
+
+            if session_id:
+                # Unregister from both registries
+                self.resource_registry.unsubscribe(uri, session_id)
+                self.notification_manager.unsubscribe_resource(session_id, uri)
+            else:
+                logger.warning(f"Resource unsubscription without session ID for URI: {uri}")
+
             result = {"unsubscribed": True, "uri": uri}
             return MCPResponse(request.jsonrpc, request.id, result=result)
 

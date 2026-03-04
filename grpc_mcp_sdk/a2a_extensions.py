@@ -19,7 +19,7 @@ from enum import Enum
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Set, Union, get_type_hints
 import inspect
 
-from .core import MCPToolResult, MCPToolContext, MCPToolDefinition, MCPToolRegistry
+from .core import MCPToolResult, ExecutionContext, ToolDefinition, ToolRegistry, Tool
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +101,7 @@ class A2AAgentRegistry:
     def __init__(self):
         self._agents: Dict[str, AgentInfo] = {}
         self._capabilities: Dict[str, List[str]] = {}  # capability_name -> [agent_ids]
-        self._tool_registry = MCPToolRegistry()  # Embed existing MCP registry
+        self._tool_registry = ToolRegistry()  # Embed existing MCP registry
         self._discovery_callbacks: List[Callable[[AgentInfo], None]] = []
         
     def register_agent(self, agent_info: AgentInfo):
@@ -222,15 +222,15 @@ class A2AAgentRegistry:
         }
     
     # MCP Tool Registry delegation
-    def register_tool(self, tool: MCPToolDefinition):
+    def register_tool(self, tool: Tool):
         """Register an MCP tool (delegates to embedded registry)"""
         self._tool_registry.register(tool)
-    
-    def get_tool(self, name: str) -> Optional[MCPToolDefinition]:
+
+    def get_tool(self, name: str) -> Optional[Tool]:
         """Get MCP tool by name"""
-        return self._tool_registry.get(name)
-    
-    def list_tools(self) -> List[MCPToolDefinition]:
+        return self._tool_registry.get_tool(name)
+
+    def list_tools(self) -> List[Tool]:
         """List all MCP tools"""
         return self._tool_registry.list_tools()
 

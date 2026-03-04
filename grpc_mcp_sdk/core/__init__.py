@@ -4,6 +4,7 @@ from .server import MCPServicer, create_server, run_server
 from .registry import ToolRegistry, Tool
 from .resource_registry import ResourceRegistry, mcp_resource, mcp_resource_template, resource, resource_template
 from .prompt_registry import PromptRegistry, mcp_prompt, prompt
+from .notifications import NotificationManager, Notification, NotificationType, Session, ProgressNotification, LogMessage
 from .decorators import mcp_tool, streaming_tool, tool, streaming
 from .client import MCPClient, create_client
 from .types import (
@@ -52,6 +53,12 @@ __all__ = [
     'PromptRegistry',
     'mcp_prompt',
     'prompt',
+    'NotificationManager',
+    'Notification',
+    'NotificationType',
+    'Session',
+    'ProgressNotification',
+    'LogMessage',
     'mcp_tool',
     'streaming_tool',
     'tool',
