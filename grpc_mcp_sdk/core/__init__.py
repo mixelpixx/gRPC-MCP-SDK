@@ -3,6 +3,7 @@
 from .server import MCPServicer, create_server, run_server
 from .registry import ToolRegistry, Tool
 from .resource_registry import ResourceRegistry, mcp_resource, mcp_resource_template, resource, resource_template
+from .prompt_registry import PromptRegistry, mcp_prompt, prompt
 from .decorators import mcp_tool, streaming_tool, tool, streaming
 from .client import MCPClient, create_client
 from .types import (
@@ -48,6 +49,9 @@ __all__ = [
     'mcp_resource_template',
     'resource',
     'resource_template',
+    'PromptRegistry',
+    'mcp_prompt',
+    'prompt',
     'mcp_tool',
     'streaming_tool',
     'tool',

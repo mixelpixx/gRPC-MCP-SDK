@@ -20,9 +20,10 @@ from google.protobuf import struct_pb2
 
 # Import our gRPC MCP SDK
 from grpc_mcp_sdk.core.client import MCPClient
-from grpc_mcp_sdk.core.types import MCPToolResult, ServerCapabilities, ToolsCapability, ResourcesCapability
+from grpc_mcp_sdk.core.types import MCPToolResult, ServerCapabilities, ToolsCapability, ResourcesCapability, PromptsCapability
 from grpc_mcp_sdk.core.registry import ToolRegistry
 from grpc_mcp_sdk.core.resource_registry import ResourceRegistry
+from grpc_mcp_sdk.core.prompt_registry import PromptRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,7 @@ class MCPBridge:
         self.grpc_client: Optional[MCPClient] = None
         self.tool_registry = ToolRegistry.global_registry()
         self.resource_registry = ResourceRegistry.global_registry()
+        self.prompt_registry = PromptRegistry.global_registry()
         self.app = web.Application()
         self.active_sessions: Dict[str, Any] = {}
         
@@ -170,6 +172,10 @@ class MCPBridge:
                 response = await self._handle_resources_subscribe(mcp_request)
             elif mcp_request.method == "resources/unsubscribe":
                 response = await self._handle_resources_unsubscribe(mcp_request)
+            elif mcp_request.method == "prompts/list":
+                response = await self._handle_prompts_list(mcp_request)
+            elif mcp_request.method == "prompts/get":
+                response = await self._handle_prompts_get(mcp_request)
             elif mcp_request.method == "ping":
                 response = await self._handle_ping(mcp_request)
             else:
@@ -198,6 +204,12 @@ class MCPBridge:
         if len(self.resource_registry) > 0:
             capabilities["resources"] = {
                 "subscribe": True,
+                "listChanged": True
+            }
+
+        # Add prompts capability if we have prompts
+        if len(self.prompt_registry) > 0:
+            capabilities["prompts"] = {
                 "listChanged": True
             }
 
@@ -489,6 +501,44 @@ class MCPBridge:
         except Exception as e:
             logger.exception("Error unsubscribing from resource")
             error = MCPError(MCPError.INTERNAL_ERROR, f"Failed to unsubscribe: {str(e)}")
+            return MCPResponse(request.jsonrpc, request.id, error=error.to_dict())
+
+    async def _handle_prompts_list(self, request: MCPRequest) -> MCPResponse:
+        """Handle prompts/list request (MCP spec compliant)"""
+        try:
+            prompts = self.prompt_registry.list_prompts()
+            result = {
+                "prompts": [p.to_dict() for p in prompts]
+            }
+            return MCPResponse(request.jsonrpc, request.id, result=result)
+
+        except Exception as e:
+            logger.exception("Error listing prompts")
+            error = MCPError(MCPError.INTERNAL_ERROR, f"Failed to list prompts: {str(e)}")
+            return MCPResponse(request.jsonrpc, request.id, error=error.to_dict())
+
+    async def _handle_prompts_get(self, request: MCPRequest) -> MCPResponse:
+        """Handle prompts/get request (MCP spec compliant)"""
+        try:
+            params = request.params
+            name = params.get("name")
+            arguments = params.get("arguments", {})
+
+            if not name:
+                error = MCPError(MCPError.INVALID_PARAMS, "Prompt name is required")
+                return MCPResponse(request.jsonrpc, request.id, error=error.to_dict())
+
+            # Execute the prompt
+            result = await self.prompt_registry.execute_prompt(name, arguments)
+
+            return MCPResponse(request.jsonrpc, request.id, result=result.to_dict())
+
+        except Exception as e:
+            if "not found" in str(e).lower():
+                error = MCPError(MCPError.INVALID_PARAMS, f"Prompt not found: {params.get('name', 'unknown')}")
+            else:
+                logger.exception("Error getting prompt")
+                error = MCPError(MCPError.INTERNAL_ERROR, f"Failed to get prompt: {str(e)}")
             return MCPResponse(request.jsonrpc, request.id, error=error.to_dict())
 
     async def _handle_ping(self, request: MCPRequest) -> MCPResponse:
