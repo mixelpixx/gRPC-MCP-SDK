@@ -71,6 +71,13 @@ from .auth import (
     AuthMiddleware,
 )
 
+# Import transport components
+from .transport import (
+    StdioTransport,
+    create_stdio_server,
+    run_stdio_server,
+)
+
 # A2A extensions - will be implemented later
 _A2A_AVAILABLE = False
 
@@ -135,7 +142,12 @@ __all__ = [
     'requires_auth',
     'requires_permission',
     'AuthMiddleware',
-    
+
+    # Transport
+    'StdioTransport',
+    'create_stdio_server',
+    'run_stdio_server',
+
     # Metadata
     '__version__',
     '__author__',
@@ -150,37 +162,52 @@ def main():
     """Main CLI entry point"""
     import sys
     import argparse
-    
+
     parser = argparse.ArgumentParser(
         description="gRPC MCP SDK - Command Line Interface",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   grpc-mcp serve --module my_tools --port 50051
+  grpc-mcp stdio --module my_tools  # For Claude Desktop
         """
     )
-    
+
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
-    
-    # Serve command  
+
+    # Serve command (gRPC)
     serve_parser = subparsers.add_parser('serve', help='Start MCP gRPC server')
     serve_parser.add_argument('--module', help='Python module containing tools')
     serve_parser.add_argument('--host', default='localhost', help='Server host')
     serve_parser.add_argument('--port', type=int, default=50051, help='Server port')
-    
+
+    # Stdio command (for Claude Desktop)
+    stdio_parser = subparsers.add_parser('stdio', help='Start MCP stdio server (for Claude Desktop)')
+    stdio_parser.add_argument('--module', help='Python module containing tools')
+    stdio_parser.add_argument('--name', default='grpc-mcp-server', help='Server name')
+    stdio_parser.add_argument('--version', default='1.0.0', help='Server version')
+
     args = parser.parse_args()
-    
+
     if not args.command:
         parser.print_help()
         sys.exit(1)
-    
+
     if args.command == 'serve':
         if args.module:
             import importlib
             importlib.import_module(args.module)
-        
+
         import asyncio
         asyncio.run(run_server(host=args.host, port=args.port))
+
+    elif args.command == 'stdio':
+        if args.module:
+            import importlib
+            importlib.import_module(args.module)
+
+        import asyncio
+        asyncio.run(run_stdio_server(server_name=args.name, server_version=args.version))
 
 if __name__ == "__main__":
     main()
