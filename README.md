@@ -1,558 +1,557 @@
 # gRPC MCP SDK
 
-A modern Python framework for building high-performance Model Context Protocol (MCP) tools with gRPC.
-
-[![PyPI version](https://badge.fury.io/py/grpc-mcp-sdk.svg)](https://badge.fury.io/py/grpc-mcp-sdk)
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://github.com/grpc-mcp-sdk/grpc-mcp-sdk/workflows/Tests/badge.svg)](https://github.com/grpc-mcp-sdk/grpc-mcp-sdk/actions)
+A Python framework for building Model Context Protocol (MCP) servers with gRPC transport.
 
 ## Overview
 
-The gRPC MCP SDK provides **5-10x performance improvements** over standard MCP implementations by using Protocol Buffers and gRPC instead of JSON-RPC over HTTP. It includes enterprise-grade security features and comprehensive tooling for production deployments.
+The gRPC MCP SDK implements the full MCP specification using gRPC for transport instead of JSON-RPC over HTTP. This provides performance improvements through Protocol Buffers serialization and HTTP/2 multiplexing, while maintaining compatibility with standard MCP clients through a bridge layer and stdio transport.
 
-### Performance Comparison
+### Transport Options
 
-| Feature | Standard MCP | gRPC MCP SDK |
-|---------|--------------|---------------|
-| Serialization | JSON (slow) | Protocol Buffers (5-10x faster) |
-| Transport | HTTP/SSE | gRPC/HTTP2 (multiplexed) |
-| Streaming | Limited SSE | Full bidirectional |
-| Type Safety | Runtime validation | Compile-time validation |
-| Connection Overhead | High | Minimal (connection reuse) |
-| Enterprise Features | Basic | Comprehensive |
+| Transport | Use Case | Client Compatibility |
+|-----------|----------|---------------------|
+| gRPC | High-performance server deployments | gRPC clients, bridge |
+| Stdio | Local clients like Claude Desktop | All MCP clients |
+| HTTP Bridge | Backward compatibility | JSON-RPC clients |
 
-### Real-World Performance Impact
-
-```
-Tool Execution Latency:
-├─ JSON-RPC/HTTP:  50-100ms
-└─ gRPC/Protobuf:  5-15ms   (5-10x faster)
-
-Throughput:
-├─ Standard MCP:   1,000 req/sec
-└─ gRPC MCP SDK:   10,000+ req/sec   (10x higher)
-
-Memory Usage:
-├─ Standard MCP:   200MB+
-└─ gRPC MCP SDK:   50MB      (4x more efficient)
-```
-
-## Features
-
-### Core MCP Features
-- **Easy Tool Creation** - Simple decorators to define MCP tools
-- **High Performance** - Built on gRPC with streaming support
-- **Secure by Default** - Built-in authentication and rate limiting
-- **Cross-Platform** - Works across languages and platforms
-- **Real-time Streaming** - Support for progressive results
-- **Production Ready** - Docker and Kubernetes support
-- **Developer Friendly** - Rich CLI and debugging tools
-- **Type Safe** - Full Protocol Buffer type validation
-- **Enterprise Grade** - Monitoring, health checks, load balancing
-
-### Security Features
-- **Multiple Authentication Methods** - Token, API key, JWT support
-- **Authorization Framework** - Role-based permissions
-- **Rate Limiting** - Token bucket and sliding window algorithms
-- **Input Sanitization** - XSS, SQL injection, and command injection protection
-- **Comprehensive Logging** - Structured logging with audit trails
-
-## Quick Start
-
-### Installation
+## Installation
 
 ```bash
 pip install grpc-mcp-sdk
 ```
 
-### Create Your First Tool
+## Core Concepts
+
+The MCP specification defines three primitives that servers can expose:
+
+- **Tools** - Functions that can be called by the client
+- **Resources** - Data that can be read by the client
+- **Prompts** - Reusable prompt templates
+
+This SDK provides decorators and registries for each primitive, plus a notification system for server-initiated messages.
+
+## Tools
+
+Tools are functions that clients can discover and execute.
+
+### Basic Tool
 
 ```python
 from grpc_mcp_sdk import mcp_tool, MCPToolResult, run_server
 import asyncio
 
 @mcp_tool(description="Calculate the square of a number")
-def square_number(x: float) -> MCPToolResult:
-    """Calculate x squared"""
+def square(x: float) -> MCPToolResult:
     result = x * x
-    return MCPToolResult().add_text(f"{x}² = {result}")
+    return MCPToolResult().add_text(f"{x} squared is {result}")
 
-@mcp_tool(description="Get weather information")
-async def get_weather(location: str) -> MCPToolResult:
-    """Get weather for a location"""
+@mcp_tool(description="Fetch weather data for a location")
+async def get_weather(location: str, units: str = "celsius") -> MCPToolResult:
     # Your weather API logic here
     return MCPToolResult().add_json({
         "location": location,
-        "temperature": 72,
-        "condition": "sunny"
+        "temperature": 22,
+        "units": units
     })
 
 if __name__ == "__main__":
     asyncio.run(run_server(port=50051))
 ```
 
-### Start the Server
+### Tool Results
 
-```bash
-python my_tools.py
+`MCPToolResult` supports multiple content types:
+
+```python
+@mcp_tool(description="Demonstrate result types")
+def demo_results() -> MCPToolResult:
+    result = MCPToolResult()
+
+    # Text content
+    result.add_text("Plain text message")
+
+    # JSON content
+    result.add_json({"key": "value", "numbers": [1, 2, 3]})
+
+    # Binary content
+    result.add_binary(b"\x89PNG...", "image/png")
+
+    # Base64-encoded image
+    result.add_image(image_bytes, mime_type="image/jpeg")
+
+    # Error (sets is_error flag automatically)
+    result.add_error("ERROR_CODE", "Description of what went wrong")
+
+    return result
 ```
 
-Or use the CLI:
+### Streaming Tools
+
+For long-running operations that need to report progress:
+
+```python
+from grpc_mcp_sdk import streaming_tool
+
+@streaming_tool(description="Process items with progress updates")
+async def process_items(count: int = 100):
+    for i in range(count):
+        # Yield progress messages
+        yield f"Processing item {i + 1} of {count}"
+        await asyncio.sleep(0.1)
+
+        # Yield intermediate results
+        if (i + 1) % 10 == 0:
+            yield MCPToolResult().add_json({
+                "completed": i + 1,
+                "remaining": count - i - 1
+            })
+
+    # Final result
+    yield MCPToolResult().add_text(f"Processed {count} items")
+```
+
+### Rate-Limited Tools
+
+```python
+@mcp_tool(description="API call with rate limiting", rate_limit=10)
+async def rate_limited_api_call(query: str) -> MCPToolResult:
+    # Limited to 10 calls per minute
+    response = await external_api.search(query)
+    return MCPToolResult().add_json(response)
+```
+
+## Resources
+
+Resources expose data that clients can read. They have URIs and can be static or dynamic.
+
+### Static Resources
+
+```python
+from grpc_mcp_sdk.core import mcp_resource
+
+@mcp_resource(
+    uri="config://app/settings",
+    name="Application Settings",
+    description="Current application configuration",
+    mime_type="application/json"
+)
+def get_settings():
+    return {
+        "theme": "dark",
+        "language": "en",
+        "debug": False
+    }
+
+@mcp_resource(
+    uri="file:///var/log/app.log",
+    name="Application Log",
+    mime_type="text/plain"
+)
+async def get_log():
+    with open("/var/log/app.log") as f:
+        return f.read()
+```
+
+### Resource Templates
+
+For dynamic resources with parameters in the URI:
+
+```python
+from grpc_mcp_sdk.core import mcp_resource_template
+
+@mcp_resource_template(
+    uri_template="db://users/{user_id}",
+    name="User Record",
+    description="Fetch user by ID",
+    mime_type="application/json"
+)
+async def get_user(user_id: str):
+    user = await database.get_user(user_id)
+    return {
+        "id": user_id,
+        "name": user.name,
+        "email": user.email
+    }
+
+@mcp_resource_template(
+    uri_template="file:///{path}",
+    name="File Reader",
+    description="Read file contents by path"
+)
+def read_file(path: str):
+    with open(path) as f:
+        return f.read()
+```
+
+### Resource Subscriptions
+
+Clients can subscribe to resource updates. When data changes, notify subscribers:
+
+```python
+from grpc_mcp_sdk.core import ResourceRegistry
+
+registry = ResourceRegistry.global_registry()
+
+# When data changes, notify subscribers
+async def on_config_change():
+    registry.notify_resource_updated("config://app/settings")
+```
+
+## Prompts
+
+Prompts are reusable templates for LLM interactions.
+
+### Basic Prompts
+
+```python
+from grpc_mcp_sdk.core import mcp_prompt
+
+@mcp_prompt(
+    description="Generate a code review prompt",
+    arguments=[
+        {"name": "code", "description": "Code to review", "required": True},
+        {"name": "language", "description": "Programming language", "required": False}
+    ]
+)
+def code_review(code: str, language: str = "python"):
+    return [
+        {
+            "role": "user",
+            "content": {"type": "text", "text": f"Review this {language} code:\n\n{code}"}
+        }
+    ]
+
+@mcp_prompt(description="Summarize a document")
+def summarize(document: str, max_length: int = 500):
+    return f"Summarize the following document in {max_length} words or less:\n\n{document}"
+```
+
+### Prompt Return Types
+
+Prompts can return:
+- A string (converted to a single user message)
+- A list of message dictionaries
+- A `GetPromptResult` object for full control
+
+```python
+from grpc_mcp_sdk.core import GetPromptResult, PromptMessage
+
+@mcp_prompt(description="Multi-turn conversation starter")
+def conversation_starter(topic: str):
+    return GetPromptResult(
+        description=f"Conversation about {topic}",
+        messages=[
+            PromptMessage(
+                role="user",
+                content={"type": "text", "text": f"Let's discuss {topic}"}
+            ),
+            PromptMessage(
+                role="assistant",
+                content={"type": "text", "text": f"I'd be happy to discuss {topic}. What aspect interests you most?"}
+            )
+        ]
+    )
+```
+
+## Running Servers
+
+### gRPC Server
+
+For high-performance deployments:
 
 ```bash
+# Using the CLI
 grpc-mcp serve --module my_tools --host 0.0.0.0 --port 50051
+
+# Or programmatically
+python -c "
+import asyncio
+from grpc_mcp_sdk import run_server
+import my_tools  # Import to register tools
+asyncio.run(run_server(port=50051))
+"
 ```
 
-### Use the Client
+### Stdio Server (Claude Desktop)
+
+For local clients like Claude Desktop:
+
+```bash
+# Using the CLI
+grpc-mcp stdio --module my_tools
+
+# Or programmatically
+python -c "
+import asyncio
+from grpc_mcp_sdk import run_stdio_server
+import my_tools
+asyncio.run(run_stdio_server())
+"
+```
+
+Claude Desktop configuration (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "my-server": {
+      "command": "grpc-mcp",
+      "args": ["stdio", "--module", "my_tools"]
+    }
+  }
+}
+```
+
+### HTTP Bridge
+
+For JSON-RPC clients that need HTTP transport:
+
+```python
+from grpc_mcp_sdk.bridge import MCPBridge
+import asyncio
+
+async def main():
+    bridge = MCPBridge(
+        grpc_server_addr="localhost:50051",
+        http_port=8080
+    )
+    await bridge.start()
+
+asyncio.run(main())
+```
+
+Endpoints:
+- `POST /mcp` - JSON-RPC requests
+- `GET /mcp/notifications` - SSE notification stream
+- `GET /health` - Health check
+- `GET /tools` - List available tools
+
+## Notifications
+
+The SDK implements MCP notifications for server-initiated messages.
+
+### Automatic Notifications
+
+The SDK automatically sends notifications when:
+- Tools are added or removed (`notifications/tools/list_changed`)
+- Resources are added or removed (`notifications/resources/list_changed`)
+- Prompts are added or removed (`notifications/prompts/list_changed`)
+
+### Manual Notifications
+
+```python
+from grpc_mcp_sdk.core import NotificationManager
+
+manager = NotificationManager.global_manager()
+
+# Notify that a resource was updated
+await manager.notify_resource_updated("config://app/settings")
+
+# Send progress updates
+token = manager.create_progress_token()
+await manager.report_progress(token, progress=0.5, message="Halfway done")
+await manager.report_progress(token, progress=1.0, message="Complete")
+manager.complete_progress(token)
+
+# Send log messages
+await manager.log_info("Operation completed successfully")
+await manager.log_error("Something went wrong")
+```
+
+## Authentication
+
+### Token Authentication
+
+```python
+from grpc_mcp_sdk import create_token_auth, requires_auth
+
+auth = create_token_auth(["secret-token-123", "admin-token-456"])
+
+@mcp_tool(description="Protected operation", requires_auth=True)
+@requires_auth()
+def protected_operation():
+    return MCPToolResult().add_text("Access granted")
+```
+
+### API Key Authentication
+
+```python
+from grpc_mcp_sdk import create_api_key_auth
+
+auth = create_api_key_auth({
+    "key-123": {"user": "alice", "permissions": ["read", "write"]},
+    "key-456": {"user": "bob", "permissions": ["read"]}
+})
+```
+
+### JWT Authentication
+
+```python
+from grpc_mcp_sdk import create_jwt_auth
+
+auth = create_jwt_auth(
+    secret="your-secret-key",
+    algorithm="HS256"
+)
+```
+
+### Permission-Based Access
+
+```python
+from grpc_mcp_sdk import requires_permission
+
+@mcp_tool(description="Admin function")
+@requires_permission("admin")
+def admin_function():
+    return MCPToolResult().add_text("Admin access")
+```
+
+## Client Usage
+
+### gRPC Client
 
 ```python
 from grpc_mcp_sdk import create_client
 import asyncio
 
 async def main():
-    client = create_client('localhost:50051')
+    client = create_client("localhost:50051")
     await client.connect()
-    
-    # Call a tool
-    result = await client.execute_tool('square_number', {'x': 5})
-    print(result)  # Output: {"content": [{"type": "text", "text": "5² = 25"}]}
-    
+
+    # List available tools
+    tools = await client.list_tools()
+    for tool in tools:
+        print(f"Tool: {tool.name} - {tool.description}")
+
+    # Execute a tool
+    result = await client.execute_tool("square", {"x": 5})
+    print(result)
+
     await client.close()
 
 asyncio.run(main())
 ```
 
-## Advanced Features
-
-### Streaming Tools
-
-Perfect for real-time data processing, monitoring, and long-running operations:
-
-```python
-from grpc_mcp_sdk import streaming_tool
-
-@streaming_tool(description="Process data with real-time updates")
-async def process_data(items: int = 100):
-    """Process data with progress updates"""
-    for i in range(items):
-        # Yield progress updates
-        yield f"Processing item {i+1}/{items}"
-        
-        # Do some work
-        await asyncio.sleep(0.01)
-        
-        # Yield intermediate results
-        if i % 10 == 0:
-            result = MCPToolResult()
-            result.add_json({"processed": i+1, "remaining": items-i-1})
-            yield result
-    
-    # Final result
-    yield MCPToolResult().add_text(f"Completed processing {items} items")
-```
-
-### Authentication & Security
-
-Enterprise-grade security with multiple authentication methods:
-
-```python
-from grpc_mcp_sdk import create_server, create_token_auth, requires_auth
-
-# Create auth handler
-auth_handler = create_token_auth(['secret-token-123', 'admin-token-456'])
-
-# Secure tool with rate limiting
-@mcp_tool(description="Admin function", requires_auth=True)
-@requires_auth()
-def admin_function():
-    return MCPToolResult().add_text("Admin access granted")
-
-# Start secure server with TLS
-server = create_server(
-    host="0.0.0.0",
-    port=50051,
-    auth_handler=auth_handler,
-    ssl_cert="cert.pem",
-    ssl_key="key.pem"
-)
-```
-
-### Rate Limiting & Security
-
-```python
-from grpc_mcp_sdk.security import create_rate_limiter
-from grpc_mcp_sdk import requires_permission
-
-# Rate limiting
-rate_limiter = create_rate_limiter(requests_per_minute=60)
-
-@mcp_tool(description="Rate limited tool", rate_limit=10)
-@requires_permission("read")
-def protected_tool():
-    return MCPToolResult().add_text("Protected data")
-```
-
-## Tool Types
-
-### Basic Tools
-Simple request/response tools for immediate results:
-```python
-@mcp_tool(description="Simple calculation")
-def add_numbers(a: int, b: int) -> MCPToolResult:
-    return MCPToolResult().add_text(f"{a} + {b} = {a + b}")
-```
-
-### Streaming Tools  
-Tools that provide real-time updates and progressive results:
-```python
-@streaming_tool(description="Real-time monitoring")
-async def monitor_system(duration: int = 60):
-    for i in range(duration):
-        # Get system metrics
-        metrics = get_system_metrics()
-        yield MCPToolResult().add_json(metrics)
-        await asyncio.sleep(1)
-```
-
-### Authenticated Tools
-Tools that require authentication tokens:
-```python
-@mcp_tool(description="Secure operation", requires_auth=True)
-def secure_operation():
-    return MCPToolResult().add_text("Secure data accessed")
-```
-
-### Rate Limited Tools
-Tools with built-in rate limiting protection:
-```python
-@mcp_tool(description="API call", rate_limit=10)  # 10 calls per minute
-async def call_external_api():
-    # Make rate-limited API call
-    return MCPToolResult().add_json({"api_response": "data"})
-```
-
-## Production Deployment
-
-### Docker Deployment
-
-Generate Docker configuration:
-
-```bash
-grpc-mcp docker --service-name my-mcp-tools --output docker-compose.yml
-```
-
-Generated docker-compose.yml:
-```yaml
-version: '3.8'
-services:
-  my-mcp-tools:
-    build: .
-    ports:
-      - "50051:50051"
-    environment:
-      - MCP_HOST=0.0.0.0
-      - MCP_PORT=50051
-    healthcheck:
-      test: ["CMD", "grpc_health_probe", "-addr=:50051"]
-      interval: 30s
-    restart: unless-stopped
-```
-
-### Kubernetes Deployment
-
-Generate Kubernetes manifests:
-
-```bash
-grpc-mcp k8s --name my-mcp-tools --replicas 3 --output k8s-deployment.yml
-```
-
-Generated k8s-deployment.yml:
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: my-mcp-tools
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: my-mcp-tools
-  template:
-    metadata:
-      labels:
-        app: my-mcp-tools
-    spec:
-      containers:
-      - name: my-mcp-tools
-        image: my-mcp-tools:latest
-        ports:
-        - containerPort: 50051
-        livenessProbe:
-          exec:
-            command: ["/bin/grpc_health_probe", "-addr=:50051"]
-```
-
-## CLI Commands
-
-### Create New Project
-```bash
-grpc-mcp create my-awesome-tools
-cd my-awesome-tools
-pip install -r requirements.txt
-python main.py
-```
-
-### Validate Tools
-```bash
-grpc-mcp validate --module my_tools
-```
-
-### Generate Documentation
-```bash
-grpc-mcp openapi --module my_tools --output api-spec.json
-```
-
-### Benchmark Performance
-```bash
-grpc-mcp benchmark --module my_tools --tool square_number --arguments '{"x": 5}'
-```
-
-### Deployment
-```bash
-# Generate Docker configuration
-grpc-mcp docker --service-name my-tools --replicas 3 --ssl
-
-# Generate Kubernetes manifests
-grpc-mcp k8s --name my-tools --namespace production --replicas 5
-```
-
-## Examples
-
-The SDK includes comprehensive examples in the `examples/` directory:
-
-- **basic_server.py** - Basic server with multiple tools
-- **authenticated_server.py** - Server with authentication
-- **secure_server.py** - Production-ready secure server
-- **client_example.py** - Client usage examples
-- **authenticated_client.py** - Client with authentication
-
-Run examples:
-
-```bash
-# Basic server
-python examples/basic_server.py
-
-# Secure server  
-python examples/secure_server.py
-
-# Client demo
-python examples/client_example.py
-```
-
 ## Architecture
 
 ```
-┌─────────────────┐    gRPC/HTTP2    ┌─────────────────┐
-│   MCP Client    │ ◄──────────────► │ gRPC MCP Server │
-│  (AI Assistant) │                  │  (Your Tools)   │
-└─────────────────┘                  └─────────────────┘
-                                              │
-                                     ┌─────────────────┐
-                                     │   Tool Registry │
-                                     │   @mcp_tool     │
-                                     │   decorators    │
-                                     └─────────────────┘
+                    ┌─────────────────────────────────────┐
+                    │           MCP Clients               │
+                    │  (Claude Desktop, AI Assistants)    │
+                    └──────────────┬──────────────────────┘
+                                   │
+              ┌────────────────────┼────────────────────┐
+              │                    │                    │
+              ▼                    ▼                    ▼
+    ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
+    │  Stdio Transport │  │  HTTP Bridge    │  │  gRPC Direct    │
+    │  (JSON-RPC)      │  │  (JSON-RPC/SSE) │  │  (Protobuf)     │
+    └────────┬────────┘  └────────┬────────┘  └────────┬────────┘
+              │                    │                    │
+              └────────────────────┼────────────────────┘
+                                   │
+                    ┌──────────────▼──────────────┐
+                    │       Core Registries       │
+                    ├─────────────────────────────┤
+                    │  ToolRegistry               │
+                    │  ResourceRegistry           │
+                    │  PromptRegistry             │
+                    │  NotificationManager        │
+                    └──────────────┬──────────────┘
+                                   │
+                    ┌──────────────▼──────────────┐
+                    │      Your Tools/Resources   │
+                    │      @mcp_tool              │
+                    │      @mcp_resource          │
+                    │      @mcp_prompt            │
+                    └─────────────────────────────┘
 ```
 
-### Core Components
+### Component Overview
 
-- **Tool Registry** - Manages tool definitions and metadata
-- **gRPC Service** - High-performance Protocol Buffer service  
-- **Auth Framework** - Pluggable authentication system
-- **Rate Limiter** - Built-in request throttling
-- **Monitoring** - Comprehensive metrics and health checks
-- **CLI Tools** - Project generation and management
+| Component | Description |
+|-----------|-------------|
+| `ToolRegistry` | Manages tool registration, discovery, and execution |
+| `ResourceRegistry` | Manages resource registration and subscription |
+| `PromptRegistry` | Manages prompt templates |
+| `NotificationManager` | Handles server-initiated notifications |
+| `StdioTransport` | JSON-RPC over stdin/stdout for local clients |
+| `MCPBridge` | HTTP bridge for JSON-RPC clients |
+| `MCPServicer` | gRPC service implementation |
 
 ## Project Structure
 
 ```
-grpc-mcp-sdk/
-├── grpc_mcp_sdk/              # Main package
-│   ├── __init__.py           # Package exports and CLI
-│   ├── py.typed              # Type hints marker
-│   ├── auth/                 # Authentication & authorization
-│   │   ├── base.py          # Base auth classes
-│   │   ├── token_auth.py    # Token authentication
-│   │   ├── api_key_auth.py  # API key authentication
-│   │   ├── jwt_auth.py      # JWT authentication
-│   │   ├── decorators.py    # Auth decorators
-│   │   └── middleware.py    # Auth middleware
-│   ├── core/                 # Core functionality
-│   │   ├── client.py        # gRPC client
-│   │   ├── decorators.py    # Tool decorators
-│   │   ├── registry.py      # Tool registry
-│   │   ├── server.py        # gRPC server
-│   │   └── types.py         # Core types
-│   ├── logging/              # Logging & monitoring
-│   │   └── logger.py        # Advanced logging
-│   ├── proto/                # Protocol buffers
-│   │   ├── mcp.proto        # Protocol definitions
-│   │   ├── mcp_pb2.py       # Generated protobuf
-│   │   └── mcp_pb2_grpc.py  # Generated gRPC
-│   ├── security/             # Security features
-│   │   ├── input_sanitizer.py   # Input sanitization
-│   │   ├── rate_limiter.py      # Rate limiting
-│   │   └── security_middleware.py # Security middleware
-│   └── utils/                # Utilities
-│       ├── errors.py        # Error definitions
-│       └── validation.py    # Input validation
-├── examples/                 # Example implementations
-├── tests/                    # Test suite
-├── pyproject.toml           # Project configuration
-├── requirements.txt         # Dependencies
-└── setup.py                 # Package setup
+grpc_mcp_sdk/
+├── __init__.py           # Package exports and CLI
+├── core/
+│   ├── types.py          # Data types (MCPToolResult, ToolDefinition, etc.)
+│   ├── registry.py       # ToolRegistry
+│   ├── resource_registry.py  # ResourceRegistry
+│   ├── prompt_registry.py    # PromptRegistry
+│   ├── notifications.py  # NotificationManager
+│   ├── decorators.py     # @mcp_tool, @streaming_tool
+│   ├── server.py         # gRPC server
+│   └── client.py         # gRPC client
+├── transport/
+│   └── stdio.py          # Stdio transport for Claude Desktop
+├── bridge.py             # HTTP/JSON-RPC bridge
+├── auth/                 # Authentication handlers
+├── security/             # Rate limiting, input sanitization
+├── proto/                # Protocol buffer definitions
+└── utils/                # Validation, error handling
 ```
 
-## Performance Benchmarks
+## MCP Protocol Compliance
 
-Real-world performance comparison:
+This SDK implements the MCP specification (2024-11-05):
 
-```
-Tool Execution (1000 calls):
-┌─────────────────┬──────────┬──────────────┬──────────┐
-│ Implementation  │ Latency  │ Throughput   │ Memory   │
-├─────────────────┼──────────┼──────────────┼──────────┤
-│ Standard MCP    │ 85ms     │ 1,200/sec    │ 180MB    │
-│ gRPC MCP SDK    │ 12ms     │ 8,500/sec    │ 45MB     │
-│ Improvement     │ 7.1x     │ 7.1x faster  │ 4x less  │
-└─────────────────┴──────────┴──────────────┴──────────┘
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Tools (list, call) | Supported | Full JSON Schema inputSchema |
+| Resources (list, read, subscribe) | Supported | Static and template resources |
+| Prompts (list, get) | Supported | Multiple return formats |
+| Notifications | Supported | All standard notification types |
+| Capabilities negotiation | Supported | listChanged flags |
+| Progress reporting | Supported | Via notification manager |
+| Logging | Supported | Via notification manager |
 
-Streaming Performance (real-time data):
-┌─────────────────┬──────────┬──────────────┬──────────┐
-│ Implementation  │ Latency  │ Messages/sec │ CPU      │
-├─────────────────┼──────────┼──────────────┼──────────┤
-│ SSE (Standard)  │ 150ms    │ 500/sec      │ 25%      │
-│ gRPC Streaming  │ 8ms      │ 15,000/sec   │ 8%       │
-│ Improvement     │ 18.8x    │ 30x faster   │ 3x less  │
-└─────────────────┴──────────┴──────────────┴──────────┘
-```
+## Examples
 
-### Why gRPC is Faster
+See the `examples/` directory for complete working examples:
 
-1. **Protocol Buffers** - Binary serialization vs JSON text
-2. **HTTP/2 Multiplexing** - Multiple streams per connection
-3. **Header Compression** - HPACK compression reduces overhead  
-4. **Connection Reuse** - Persistent connections vs request/response
-5. **Binary Framing** - Efficient data representation
+- `basic_server.py` - Simple server with tools
+- `resources_example.py` - Resource registration and templates
+- `prompts_example.py` - Prompt templates
+- `authenticated_server.py` - Server with authentication
+- `client_example.py` - Client usage
 
 ## Development
 
-### Setup
-
 ```bash
-# Clone repository
-git clone https://github.com/your-username/grpc-mcp-sdk.git
-cd grpc-mcp-sdk
-
-# Create virtual environment
+# Clone and setup
+git clone https://github.com/mixelpixx/gRPC-MCP-SDK.git
+cd gRPC-MCP-SDK
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install development dependencies
+source venv/bin/activate
 pip install -e ".[dev]"
 
-# Generate protobuf files
-python -m grpc_tools.protoc --python_out=grpc_mcp_sdk/proto --grpc_python_out=grpc_mcp_sdk/proto --proto_path=grpc_mcp_sdk/proto grpc_mcp_sdk/proto/mcp.proto
+# Run tests
+pytest tests/ -v
 
-# Install pre-commit hooks
-pre-commit install
-```
-
-### Running Quality Checks
-
-```bash
-# Format code
-black grpc_mcp_sdk/
-isort grpc_mcp_sdk/
-
-# Lint code
-flake8 grpc_mcp_sdk/
-
-# Type check
+# Type checking
 mypy grpc_mcp_sdk/
 
-# Security check
-bandit -r grpc_mcp_sdk/
-
-# Run tests
-pytest tests/ -v --cov=grpc_mcp_sdk
+# Linting
+flake8 grpc_mcp_sdk/
+black grpc_mcp_sdk/
 ```
-
-### Building Distribution
-
-Use the included build script:
-
-```bash
-python build_distribution.py
-```
-
-This will:
-1. Generate protobuf files
-2. Clean build artifacts
-3. Build wheel and source distributions
-4. Verify the built packages
-5. Check distribution quality
-
-## Contributing
-
-We welcome contributions! Areas needing help:
-
-- Performance optimization
-- Additional authentication methods
-- More comprehensive examples
-- Cross-platform testing
-- Documentation improvements
-
-Please follow these guidelines:
-1. Follow existing code style (Black, isort, flake8)
-2. Add type hints to all functions
-3. Write comprehensive tests
-4. Update documentation for new features
-5. Use conventional commit messages
-
-### Commit Message Format
-
-```
-type(scope): description
-
-[optional body]
-
-[optional footer]
-```
-
-Types:
-- `feat`: New feature
-- `fix`: Bug fix
-- `docs`: Documentation
-- `style`: Code style changes
-- `refactor`: Code refactoring
-- `test`: Adding tests
-- `chore`: Maintenance tasks
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+MIT License - see [LICENSE](LICENSE) file.
 
-## Support
+## Links
 
-- [Issue Tracker](https://github.com/grpc-mcp-sdk/grpc-mcp-sdk/issues)
-- [Discussions](https://github.com/grpc-mcp-sdk/grpc-mcp-sdk/discussions)
-
-## Related Projects
-
-- [Model Context Protocol](https://modelcontextprotocol.io/) - Official MCP specification
-- [FastMCP](https://github.com/modelcontextprotocol/python-sdk) - Official Python SDK
-- [MCP Servers](https://github.com/modelcontextprotocol/servers) - Reference implementations
-
-Built for the MCP community. Star us on GitHub if this project helps you!
+- [MCP Specification](https://spec.modelcontextprotocol.io/)
+- [Issue Tracker](https://github.com/mixelpixx/gRPC-MCP-SDK/issues)
