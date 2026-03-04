@@ -105,10 +105,32 @@ class AuthenticationError(MCPError):
 
 class RateLimitError(MCPError):
     """Raised when rate limit is exceeded."""
-    
+
     def __init__(self, limit: int, window: int):
         super().__init__(
             ErrorCode.RATE_LIMIT_EXCEEDED,
             f"Rate limit exceeded: {limit} requests per {window} seconds",
             {"limit": limit, "window": window}
+        )
+
+
+class ResourceNotFoundError(MCPError):
+    """Raised when a requested resource is not found."""
+
+    def __init__(self, uri: str):
+        super().__init__(
+            ErrorCode.RESOURCE_NOT_FOUND,
+            f"Resource not found: {uri}",
+            {"uri": uri}
+        )
+
+
+class PromptNotFoundError(MCPError):
+    """Raised when a requested prompt is not found."""
+
+    def __init__(self, name: str):
+        super().__init__(
+            ErrorCode.RESOURCE_NOT_FOUND,  # Reuse code
+            f"Prompt not found: {name}",
+            {"prompt_name": name}
         )

@@ -20,8 +20,9 @@ from google.protobuf import struct_pb2
 
 # Import our gRPC MCP SDK
 from grpc_mcp_sdk.core.client import MCPClient
-from grpc_mcp_sdk.core.types import MCPToolResult, ServerCapabilities, ToolsCapability
+from grpc_mcp_sdk.core.types import MCPToolResult, ServerCapabilities, ToolsCapability, ResourcesCapability
 from grpc_mcp_sdk.core.registry import ToolRegistry
+from grpc_mcp_sdk.core.resource_registry import ResourceRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,7 @@ class MCPBridge:
         self.http_port = http_port
         self.grpc_client: Optional[MCPClient] = None
         self.tool_registry = ToolRegistry.global_registry()
+        self.resource_registry = ResourceRegistry.global_registry()
         self.app = web.Application()
         self.active_sessions: Dict[str, Any] = {}
         
@@ -162,6 +164,12 @@ class MCPBridge:
                 response = await self._handle_resources_list(mcp_request)
             elif mcp_request.method == "resources/read":
                 response = await self._handle_resources_read(mcp_request)
+            elif mcp_request.method == "resources/templates/list":
+                response = await self._handle_resources_templates_list(mcp_request)
+            elif mcp_request.method == "resources/subscribe":
+                response = await self._handle_resources_subscribe(mcp_request)
+            elif mcp_request.method == "resources/unsubscribe":
+                response = await self._handle_resources_unsubscribe(mcp_request)
             elif mcp_request.method == "ping":
                 response = await self._handle_ping(mcp_request)
             else:
@@ -182,11 +190,20 @@ class MCPBridge:
 
     async def _handle_initialize(self, request: MCPRequest) -> MCPResponse:
         """Handle MCP initialization (MCP spec compliant)"""
+        capabilities = {
+            "tools": {"listChanged": True}
+        }
+
+        # Add resources capability if we have resources
+        if len(self.resource_registry) > 0:
+            capabilities["resources"] = {
+                "subscribe": True,
+                "listChanged": True
+            }
+
         result = {
             "protocolVersion": "2024-11-05",
-            "capabilities": {
-                "tools": {"listChanged": True}
-            },
+            "capabilities": capabilities,
             "serverInfo": {
                 "name": "gRPC-MCP-Bridge",
                 "version": "1.0.0"
@@ -372,16 +389,107 @@ class MCPBridge:
         return response
 
     async def _handle_resources_list(self, request: MCPRequest) -> MCPResponse:
-        """Handle resources/list request"""
-        # For now, return empty resources list
-        # In the future, this could expose gRPC service reflection
-        result = {"resources": []}
-        return MCPResponse(request.jsonrpc, request.id, result=result)
+        """Handle resources/list request (MCP spec compliant)"""
+        try:
+            resources = self.resource_registry.list_resources()
+            templates = self.resource_registry.list_templates()
+
+            result = {
+                "resources": [r.to_dict() for r in resources]
+            }
+
+            # Include templates if any exist
+            if templates:
+                result["resourceTemplates"] = [t.to_dict() for t in templates]
+
+            return MCPResponse(request.jsonrpc, request.id, result=result)
+
+        except Exception as e:
+            logger.exception("Error listing resources")
+            error = MCPError(MCPError.INTERNAL_ERROR, f"Failed to list resources: {str(e)}")
+            return MCPResponse(request.jsonrpc, request.id, error=error.to_dict())
 
     async def _handle_resources_read(self, request: MCPRequest) -> MCPResponse:
-        """Handle resources/read request"""
-        error = MCPError(MCPError.METHOD_NOT_FOUND, "Resources not implemented yet")
-        return MCPResponse(request.jsonrpc, request.id, error=error.to_dict())
+        """Handle resources/read request (MCP spec compliant)"""
+        try:
+            params = request.params
+            uri = params.get("uri")
+
+            if not uri:
+                error = MCPError(MCPError.INVALID_PARAMS, "Resource URI is required")
+                return MCPResponse(request.jsonrpc, request.id, error=error.to_dict())
+
+            # Read the resource
+            contents = await self.resource_registry.read_resource(uri)
+
+            result = {
+                "contents": [contents.to_dict()]
+            }
+
+            return MCPResponse(request.jsonrpc, request.id, result=result)
+
+        except Exception as e:
+            if "not found" in str(e).lower():
+                error = MCPError(MCPError.INVALID_PARAMS, f"Resource not found: {params.get('uri', 'unknown')}")
+            else:
+                logger.exception("Error reading resource")
+                error = MCPError(MCPError.INTERNAL_ERROR, f"Failed to read resource: {str(e)}")
+            return MCPResponse(request.jsonrpc, request.id, error=error.to_dict())
+
+    async def _handle_resources_templates_list(self, request: MCPRequest) -> MCPResponse:
+        """Handle resources/templates/list request"""
+        try:
+            templates = self.resource_registry.list_templates()
+            result = {
+                "resourceTemplates": [t.to_dict() for t in templates]
+            }
+            return MCPResponse(request.jsonrpc, request.id, result=result)
+
+        except Exception as e:
+            logger.exception("Error listing resource templates")
+            error = MCPError(MCPError.INTERNAL_ERROR, f"Failed to list templates: {str(e)}")
+            return MCPResponse(request.jsonrpc, request.id, error=error.to_dict())
+
+    async def _handle_resources_subscribe(self, request: MCPRequest) -> MCPResponse:
+        """Handle resources/subscribe request"""
+        try:
+            params = request.params
+            uri = params.get("uri")
+
+            if not uri:
+                error = MCPError(MCPError.INVALID_PARAMS, "Resource URI is required")
+                return MCPResponse(request.jsonrpc, request.id, error=error.to_dict())
+
+            # Generate subscriber ID (in real impl, use session ID)
+            subscriber_id = str(uuid.uuid4())
+            self.resource_registry.subscribe(uri, subscriber_id)
+
+            result = {"subscribed": True, "uri": uri}
+            return MCPResponse(request.jsonrpc, request.id, result=result)
+
+        except Exception as e:
+            logger.exception("Error subscribing to resource")
+            error = MCPError(MCPError.INTERNAL_ERROR, f"Failed to subscribe: {str(e)}")
+            return MCPResponse(request.jsonrpc, request.id, error=error.to_dict())
+
+    async def _handle_resources_unsubscribe(self, request: MCPRequest) -> MCPResponse:
+        """Handle resources/unsubscribe request"""
+        try:
+            params = request.params
+            uri = params.get("uri")
+
+            if not uri:
+                error = MCPError(MCPError.INVALID_PARAMS, "Resource URI is required")
+                return MCPResponse(request.jsonrpc, request.id, error=error.to_dict())
+
+            # Note: In real impl, need to track subscriber IDs per session
+            result = {"unsubscribed": True, "uri": uri}
+            return MCPResponse(request.jsonrpc, request.id, result=result)
+
+        except Exception as e:
+            logger.exception("Error unsubscribing from resource")
+            error = MCPError(MCPError.INTERNAL_ERROR, f"Failed to unsubscribe: {str(e)}")
+            return MCPResponse(request.jsonrpc, request.id, error=error.to_dict())
 
     async def _handle_ping(self, request: MCPRequest) -> MCPResponse:
         """Handle ping request"""

@@ -484,7 +484,186 @@ class FinalResultResponse(StreamingResponse):
 
 class ErrorResponse(StreamingResponse):
     """Error response for streaming tools."""
-    
+
     def __init__(self, request_id: str, error: Dict[str, Any]):
         super().__init__(request_id)
         self.error = error
+
+
+# =============================================================================
+# MCP Resources (per spec 2024-11-05)
+# =============================================================================
+
+@dataclass
+class ResourceAnnotations:
+    """Annotations for resources describing intended use."""
+    audience: Optional[List[str]] = None  # ["user", "assistant"]
+    priority: Optional[float] = None  # 0.0 to 1.0
+    lastModified: Optional[str] = None  # ISO 8601 timestamp
+
+    def to_dict(self) -> Dict[str, Any]:
+        result = {}
+        if self.audience:
+            result["audience"] = self.audience
+        if self.priority is not None:
+            result["priority"] = self.priority
+        if self.lastModified:
+            result["lastModified"] = self.lastModified
+        return result
+
+
+@dataclass
+class Resource:
+    """Represents an MCP resource.
+
+    Resources are data sources that can be read by clients.
+    Each resource has a unique URI and optional metadata.
+    """
+    uri: str
+    name: str
+    description: Optional[str] = None
+    mimeType: Optional[str] = None
+    annotations: Optional[ResourceAnnotations] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to MCP-compliant dictionary."""
+        result = {
+            "uri": self.uri,
+            "name": self.name
+        }
+        if self.description:
+            result["description"] = self.description
+        if self.mimeType:
+            result["mimeType"] = self.mimeType
+        if self.annotations:
+            result["annotations"] = self.annotations.to_dict()
+        return result
+
+
+@dataclass
+class ResourceTemplate:
+    """Represents an MCP resource template.
+
+    Resource templates use URI templates (RFC 6570) to define
+    dynamic resources that can be parameterized.
+    """
+    uriTemplate: str
+    name: str
+    description: Optional[str] = None
+    mimeType: Optional[str] = None
+    annotations: Optional[ResourceAnnotations] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to MCP-compliant dictionary."""
+        result = {
+            "uriTemplate": self.uriTemplate,
+            "name": self.name
+        }
+        if self.description:
+            result["description"] = self.description
+        if self.mimeType:
+            result["mimeType"] = self.mimeType
+        if self.annotations:
+            result["annotations"] = self.annotations.to_dict()
+        return result
+
+
+@dataclass
+class ResourceContents:
+    """Contents of a resource after reading.
+
+    Contains either text or blob (base64-encoded binary), not both.
+    """
+    uri: str
+    mimeType: Optional[str] = None
+    text: Optional[str] = None
+    blob: Optional[str] = None  # base64-encoded binary
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to MCP-compliant dictionary."""
+        result = {"uri": self.uri}
+        if self.mimeType:
+            result["mimeType"] = self.mimeType
+        if self.text is not None:
+            result["text"] = self.text
+        if self.blob is not None:
+            result["blob"] = self.blob
+        return result
+
+    @classmethod
+    def from_text(cls, uri: str, text: str, mime_type: str = "text/plain") -> "ResourceContents":
+        """Create text resource contents."""
+        return cls(uri=uri, mimeType=mime_type, text=text)
+
+    @classmethod
+    def from_binary(cls, uri: str, data: bytes, mime_type: str = "application/octet-stream") -> "ResourceContents":
+        """Create binary resource contents (base64 encoded)."""
+        return cls(uri=uri, mimeType=mime_type, blob=base64.b64encode(data).decode("utf-8"))
+
+
+# =============================================================================
+# MCP Prompts (per spec 2024-11-05)
+# =============================================================================
+
+@dataclass
+class PromptArgument:
+    """An argument that a prompt accepts."""
+    name: str
+    description: Optional[str] = None
+    required: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        result = {"name": self.name}
+        if self.description:
+            result["description"] = self.description
+        if self.required:
+            result["required"] = self.required
+        return result
+
+
+@dataclass
+class PromptMessage:
+    """A message in a prompt response."""
+    role: str  # "user" or "assistant"
+    content: Dict[str, Any]  # TextContent, ImageContent, or EmbeddedResource
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "role": self.role,
+            "content": self.content
+        }
+
+
+@dataclass
+class Prompt:
+    """Represents an MCP prompt.
+
+    Prompts are reusable templates that can generate messages
+    for language model interactions.
+    """
+    name: str
+    description: Optional[str] = None
+    arguments: List[PromptArgument] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to MCP-compliant dictionary."""
+        result = {"name": self.name}
+        if self.description:
+            result["description"] = self.description
+        if self.arguments:
+            result["arguments"] = [arg.to_dict() for arg in self.arguments]
+        return result
+
+
+@dataclass
+class GetPromptResult:
+    """Result of getting a prompt with arguments applied."""
+    description: Optional[str] = None
+    messages: List[PromptMessage] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        result = {}
+        if self.description:
+            result["description"] = self.description
+        result["messages"] = [msg.to_dict() for msg in self.messages]
+        return result

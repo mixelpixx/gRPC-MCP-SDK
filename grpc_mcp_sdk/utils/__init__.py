@@ -7,7 +7,9 @@ from .errors import (
     ToolExecutionError,
     ValidationError,
     AuthenticationError,
-    RateLimitError
+    RateLimitError,
+    ResourceNotFoundError,
+    PromptNotFoundError
 )
 from .validation import (
     validate_tool_name,
@@ -24,6 +26,8 @@ __all__ = [
     'ValidationError',
     'AuthenticationError',
     'RateLimitError',
+    'ResourceNotFoundError',
+    'PromptNotFoundError',
     'validate_tool_name',
     'validate_parameters',
     'validate_context',
